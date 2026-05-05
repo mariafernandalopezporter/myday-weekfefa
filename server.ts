@@ -60,18 +60,20 @@ db_local.exec(`
     recurring TEXT,
     location TEXT
   );
+`);
 
-  // Drop old ifn_data if it has the wrong columns (we detect this by checking if 'indicador' exists)
-  try {
-    const tableInfo = db_local.pragma("table_info(ifn_data)");
-    if (Array.isArray(tableInfo) && tableInfo.some((col: any) => col.name === 'indicador')) {
-      console.log('Migrating ifn_data table...');
-      db_local.exec('DROP TABLE ifn_data');
-    }
-  } catch (e) {
-    // Table might not exist yet, that's fine
+// Drop old ifn_data if it has the wrong columns (we detect this by checking if 'indicador' exists)
+try {
+  const tableInfo = db_local.pragma("table_info(ifn_data)");
+  if (Array.isArray(tableInfo) && tableInfo.some((col: any) => col.name === 'indicador')) {
+    console.log('Migrating ifn_data table...');
+    db_local.exec('DROP TABLE ifn_data');
   }
+} catch (e) {
+  // Table might not exist yet, that's fine
+}
 
+db_local.exec(`
   CREATE TABLE IF NOT EXISTS ifn_data (
     id TEXT PRIMARY KEY,
     number TEXT,
@@ -84,28 +86,44 @@ db_local.exec(`
     data_json TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS links_data (
+    id TEXT PRIMARY KEY,
+    nombre TEXT,
+    link TEXT,
+    descripcion TEXT,
+    tipo TEXT,
+    seccion TEXT,
+    status TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS config (
     key TEXT PRIMARY KEY,
     value TEXT
   );
 `);
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // API Routes for Local Persistence
 app.get('/api/config', (req, res) => {
   const webhookRow = db_local.prepare('SELECT value FROM config WHERE key = ?').get('webhook_url');
+  const linksWebhookRow = db_local.prepare('SELECT value FROM config WHERE key = ?').get('links_webhook_url');
   const sheetRow = db_local.prepare('SELECT value FROM config WHERE key = ?').get('sheet_id');
   res.json({ 
     webhookUrl: webhookRow ? (webhookRow as any).value : '',
+    linksWebhookUrl: linksWebhookRow ? (linksWebhookRow as any).value : 'https://script.google.com/macros/s/AKfycbxcF1hO4f1TAw2CfaTI6ORqX3rqugJSMw11REsuZc0egBKRStJ9lwu0mvy679zcatdSag/exec',
     sheetId: sheetRow ? (sheetRow as any).value : (process.env.GOOGLE_SHEET_ID || '1W6Y_gKXIxu3xTiiHbFiYffswasxXdEVmdG_JLq838T8')
   });
 });
 
 app.post('/api/config', (req, res) => {
-  const { webhookUrl, sheetId } = req.body;
+  const { webhookUrl, linksWebhookUrl, sheetId } = req.body;
   if (webhookUrl !== undefined) {
     db_local.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('webhook_url', webhookUrl);
+  }
+  if (linksWebhookUrl !== undefined) {
+    db_local.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('links_webhook_url', linksWebhookUrl);
   }
   if (sheetId !== undefined) {
     db_local.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('sheet_id', sheetId);
@@ -380,6 +398,7 @@ app.get('/api/data/load', (req, res) => {
     const budget = db_local.prepare('SELECT * FROM budget').all();
     const events = db_local.prepare('SELECT * FROM events').all();
     const ifnRaw = db_local.prepare('SELECT * FROM ifn_data').all();
+    const links = db_local.prepare('SELECT * FROM links_data').all();
     const ifn = ifnRaw.map((r: any) => {
       try {
         if (r.data_json) return JSON.parse(r.data_json);
@@ -394,7 +413,8 @@ app.get('/api/data/load', (req, res) => {
       fefaTasks: fefaTasks.map((t: any) => ({ ...t, completed: !!t.completed })),
       budget,
       importantEvents: events.map((e: any) => ({ ...e, isAllDay: !!e.isAllDay })),
-      ifnData: ifn
+      ifnData: ifn,
+      linkData: links
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -402,7 +422,7 @@ app.get('/api/data/load', (req, res) => {
 });
 
 app.post('/api/data/save', async (req, res) => {
-  const { workTasks, fefaTasks, budget, importantEvents, ifnData } = req.body;
+  const { workTasks, fefaTasks, budget, importantEvents, ifnData, linkData } = req.body;
   
   const transaction = db_local.transaction(() => {
     db_local.prepare('DELETE FROM work_tasks').run();
@@ -410,6 +430,7 @@ app.post('/api/data/save', async (req, res) => {
     db_local.prepare('DELETE FROM budget').run();
     db_local.prepare('DELETE FROM events').run();
     db_local.prepare('DELETE FROM ifn_data').run();
+    db_local.prepare('DELETE FROM links_data').run();
 
     const insertWork = db_local.prepare(`
       INSERT INTO work_tasks (id, date, task, category, deadline, priority, responsible, status, isUrgent, isImportant, description)
@@ -454,6 +475,16 @@ app.post('/api/data/save', async (req, res) => {
         );
       });
     }
+
+    const insertLink = db_local.prepare(`
+      INSERT INTO links_data (id, nombre, link, descripcion, tipo, seccion, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    if (linkData && Array.isArray(linkData)) {
+      linkData.forEach((l: any) => {
+        insertLink.run(l.id || Math.random().toString(36).substr(2, 9), l.nombre || '', l.link || '', l.descripcion || '', l.tipo || '', l.seccion || '', l.status || '');
+      });
+    }
   });
 
   try {
@@ -475,7 +506,7 @@ app.post('/api/data/save', async (req, res) => {
           timestamp: new Date().toISOString()
         }, {
           headers: { 'Content-Type': 'application/json' },
-          timeout: 15000 // Aumentado a 15s para Google Apps Script
+          timeout: 60000 // Aumentado a 60s para Google Apps Script
         }).then((response) => {
           console.log('Sync exitoso a Google Sheets:', response.status);
         }).catch(err => {

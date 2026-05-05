@@ -115,13 +115,14 @@ interface IFNRecord {
   state: string;
   opened_at: string;
   priority: string;
-  category: string;
+  category?: string;
   u_module: string;
   assigned_to: string;
-  assignment_group: string;
-  impact: string;
+  assignment_group?: string;
+  impact?: string;
   description: string;
   u_resolution_sla_traffic_light: string;
+  itelement?: string;
 }
 
 interface BudgetItem {
@@ -132,6 +133,16 @@ interface BudgetItem {
   category: string;
   type: 'Income' | 'Expense';
   isMonthly?: boolean;
+}
+
+interface LinkRecord {
+  id: string;
+  nombre: string;
+  link: string;
+  descripcion: string;
+  tipo: string;
+  seccion: string;
+  status: string;
 }
 
 const MOCK_EVENTS: ImportantEvent[] = [
@@ -145,6 +156,48 @@ interface PersonalTask {
   completed: boolean;
   type: 'daily' | 'weekly';
 }
+
+const MOCK_IFN: IFNRecord[] = [
+  {
+    id: '1',
+    number: 'CS0200066',
+    short_description: 'Error en procesamiento de pagos internacionales',
+    u_module: 'FINANZAS',
+    itelement: 'SAP_FICO',
+    state: 'In Progress',
+    priority: '1 - Critical',
+    opened_at: '2024-05-01 10:30:00',
+    assigned_to: 'Maria Lopez',
+    u_resolution_sla_traffic_light: 'Green',
+    description: 'El sistema arroja un error 500 al intentar procesar remesas desde la sucursal de Santiago. Se requiere revisión de logs de integración.'
+  },
+  {
+    id: '2',
+    number: 'CS0200067',
+    short_description: 'Solicitud de acceso a nuevo módulo de Tesorería',
+    u_module: 'LEGAL',
+    itelement: 'DOC_GEN',
+    state: 'Resolved',
+    priority: '3 - Moderate',
+    opened_at: '2024-05-02 09:15:00',
+    assigned_to: 'Juan Perez',
+    u_resolution_sla_traffic_light: 'Green',
+    description: 'Usuario requiere permisos de lectura/escritura para la generación de reportes mensuales de auditoría.'
+  },
+  {
+    id: '3',
+    number: 'CS0200068',
+    short_description: 'Lentitud extrema en portal de empleados',
+    u_module: 'RRHH',
+    itelement: 'PEOPLE_PORTAL',
+    state: 'New',
+    priority: '2 - High',
+    opened_at: '2024-05-04 15:45:00',
+    assigned_to: 'Soporte IT',
+    u_resolution_sla_traffic_light: 'Red',
+    description: 'Varios usuarios reportan tiempos de carga superiores a 30 segundos en la sección de mis liquidaciones.'
+  }
+];
 
 // Mock Data for immediate ADHD-friendly use
 const MOCK_WORK_TASKS: Task[] = [
@@ -258,6 +311,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(true);
   const [webhookUrl, setWebhookUrl] = useState('');
+  const [linksWebhookUrl, setLinksWebhookUrl] = useState('');
   const [spreadsheetId, setSpreadsheetId] = useState('');
   const [showConfig, setShowConfig] = useState(false);
   const [spreadsheetUrl, setSpreadsheetUrl] = useState('');
@@ -273,8 +327,14 @@ export default function App() {
   const [importEventsOpen, setImportEventsOpen] = useState(false);
   const [budget, setBudget] = useState<BudgetItem[]>(MOCK_BUDGET.map((b, i) => ({ ...b, id: i.toString() })));
   const [importantEvents, setImportantEvents] = useState<ImportantEvent[]>(MOCK_EVENTS);
-  const [ifnData, setIfnData] = useState<IFNRecord[]>([]);
+  const [ifnData, setIfnData] = useState<IFNRecord[]>(MOCK_IFN);
   const [ifnSearchTerm, setIfnSearchTerm] = useState('');
+  const [ifnFilterNumber, setIfnFilterNumber] = useState('');
+  const [ifnFilterState, setIfnFilterState] = useState('');
+  const [ifnFilterItElement, setIfnFilterItElement] = useState('');
+  const [selectedIFN, setSelectedIFN] = useState<IFNRecord | null>(null);
+  const [linkData, setLinkData] = useState<LinkRecord[]>([]);
+  const [linkSearchTerm, setLinkSearchTerm] = useState('');
   const [eventView, setEventView] = useState<'month' | 'week' | 'day'>('month');
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [currentMonth, setCurrentMonth] = useState(format(new Date(), 'yyyy-MM'));
@@ -292,7 +352,7 @@ export default function App() {
     }, 1000); // 1 second debounce for "immediate" feel
 
     return () => clearTimeout(timer);
-  }, [workTasks, fefaTasks, budget, importantEvents]);
+  }, [workTasks, fefaTasks, budget, importantEvents, linkData]);
 
   // Sync immediately when authentication or webhook happens
   useEffect(() => {
@@ -314,7 +374,8 @@ export default function App() {
           fefaTasks,
           budget,
           importantEvents,
-          ifnData
+          ifnData,
+          linkData
         })
       });
 
@@ -396,6 +457,7 @@ export default function App() {
 
   useEffect(() => {
     checkAuthStatus();
+    loadAllData(); // Load local data immediately on mount
     loadConfig();
     window.addEventListener('message', handleOAuthMessage);
     return () => window.removeEventListener('message', handleOAuthMessage);
@@ -407,6 +469,7 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setWebhookUrl(data.webhookUrl || '');
+        setLinksWebhookUrl(data.linksWebhookUrl || '');
         setSpreadsheetId(data.sheetId || '');
         if (data.sheetId) {
           setSpreadsheetUrl(`https://docs.google.com/spreadsheets/d/${data.sheetId}`);
@@ -430,6 +493,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           webhookUrl, 
+          linksWebhookUrl,
           sheetId: sId 
         })
       });
@@ -479,6 +543,7 @@ export default function App() {
         if (data.budget && data.budget.length > 0) setBudget(data.budget);
         if (data.importantEvents && data.importantEvents.length > 0) setImportantEvents(data.importantEvents);
         if (data.ifnData && data.ifnData.length > 0) setIfnData(data.ifnData);
+        if (data.linkData && data.linkData.length > 0) setLinkData(data.linkData);
         
         setIsDemoMode(false);
         setLastSynced(new Date());
@@ -592,7 +657,14 @@ export default function App() {
             active={activeTab === 'ifn'} 
             onClick={() => setActiveTab('ifn')}
             icon={<Target size={20} />}
-            label="IFN"
+            label="TICKETS IFN"
+            collapsed={!sidebarOpen}
+          />
+          <NavButton 
+            active={activeTab === 'links'} 
+            onClick={() => setActiveTab('links')}
+            icon={<Globe size={20} />}
+            label="LINKS DE ACCESO"
             collapsed={!sidebarOpen}
           />
           <NavButton 
@@ -646,7 +718,8 @@ export default function App() {
                activeTab === 'trabajo' ? 'TAREAS LATAM' : 
                activeTab === 'budget' ? 'FLUJO FINANCIERO' : 
                activeTab === 'events' ? 'EVENTOS IMPORTANTES' : 
-               activeTab === 'ifn' ? 'INDICADORES IFN' : 'MATRIZ DE PRIORIDADES'}
+               activeTab === 'ifn' ? 'INDICADORES IFN' : 
+               activeTab === 'links' ? 'LINKS DE ACCESO RÁPIDO' : 'MATRIZ DE PRIORIDADES'}
             </h1>
             <div className="flex flex-wrap items-center gap-4">
               <p className="text-zinc-400 font-bold text-[9px] md:text-[10px] uppercase tracking-widest flex items-center gap-2">
@@ -717,7 +790,17 @@ export default function App() {
                         />
                       </div>
 
-                      <div className="p-4 bg-black/30 rounded-2xl border border-white/10 space-y-3">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-white/80 uppercase tracking-widest pl-1">Webhook Enlaces (Links)</label>
+                        <input 
+                          value={linksWebhookUrl}
+                          onChange={(e) => setLinksWebhookUrl(e.target.value)}
+                          placeholder="URL específica para links..."
+                          className="w-full bg-white/10 border border-white/20 text-white text-xs p-4 rounded-2xl placeholder:text-white/30 focus:ring-2 focus:ring-latam-salmon outline-none transition-all"
+                        />
+                      </div>
+
+                      <div className="space-y-3">
                          <div className="flex items-center gap-2">
                             <div className="w-4 h-4 bg-latam-salmon rounded-full flex items-center justify-center text-[10px] font-black">!</div>
                             <p className="text-[10px] font-black text-white uppercase tracking-widest">Instrucciones para Google</p>
@@ -730,61 +813,23 @@ export default function App() {
                          </p>
                          <div className="relative">
                             <pre className="text-[8px] text-green-300 font-mono bg-black/40 p-3 rounded-xl max-h-48 overflow-auto border border-white/5">
-{`function doPost(e) {
-  var data = JSON.parse(e.postData.contents);
+{`function doGet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  
-  function sync(name, headers, items, mapFn) {
-    var sheet = ss.getSheetByName(name) || ss.insertSheet(name);
-    sheet.clear();
-    sheet.appendRow(headers);
-    if (items && items.length > 0) {
-      items.forEach(function(item) { sheet.appendRow(mapFn(item)); });
-    }
-  }
-
-  sync('Trabajo', ['ID', 'Tarea', 'Status', 'Prioridad', 'Deadline'], data.workTasks, function(t) {
-    return [t.id, t.task, t.status, t.priority, t.deadline];
-  });
-
-  sync('Personal', ['ID', 'Tarea', 'Completada', 'Prioridad', 'Categoría'], data.fefaTasks, function(t) {
-    return [t.id, t.text, t.completed, t.priority, t.category];
-  });
-
-  sync('Budget', ['ID', 'Descripción', 'Monto', 'Tipo', 'Fecha'], data.budget, function(b) {
-    return [b.id, b.description, b.amount, b.type, b.date];
-  });
-
-  sync('Eventos', ['ID', 'Título', 'Fecha', 'Ubicación', 'Tipo'], data.importantEvents, function(e) {
-    return [e.id, e.title, e.date, e.location, e.type];
-  });
-  
-  return ContentService.createTextOutput(JSON.stringify({"status":"ok"}))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function doGet() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('IFN');
-  if (!sheet) return ContentService.createTextOutput(JSON.stringify({error: "No IFN sheet"})).setMimeType(ContentService.MimeType.JSON);
-  
+  var sheet = ss.getSheetByName('Links');
+  if (!sheet) return ContentService.createTextOutput(JSON.stringify({error: "No links sheet"})).setMimeType(ContentService.MimeType.JSON);
   var data = sheet.getDataRange().getValues();
   var headers = data[0];
   var rows = data.slice(1);
-  
-  var ifnData = rows.map(function(row) {
+  var linkData = rows.map(function(row) {
     var obj = {};
     headers.forEach(function(h, i) {
-      // Map columns to friendly names used in the app
       var key = h.toLowerCase().trim();
       obj[key] = row[i];
     });
-    // Ensure ID is unique
-    obj.id = obj.sys_id || obj.number || Math.random().toString(36).substr(2, 9);
+    obj.id = Math.random().toString(36).substr(2, 9);
     return obj;
   });
-  
-  return ContentService.createTextOutput(JSON.stringify({ifnData: ifnData}))
+  return ContentService.createTextOutput(JSON.stringify({linkData: linkData}))
     .setMimeType(ContentService.MimeType.JSON);
 }`}
                             </pre>
@@ -793,9 +838,9 @@ function doGet() {
                               variant="ghost" 
                               className="absolute top-2 right-2 h-6 text-[8px] bg-white/10 text-white hover:bg-white/20 uppercase font-black"
                               onClick={() => {
-                                const code = `function doPost(e) {\n  var data = JSON.parse(e.postData.contents);\n  var ss = SpreadsheetApp.getActiveSpreadsheet();\n  \n  function sync(name, headers, items, mapFn) {\n    var sheet = ss.getSheetByName(name) || ss.insertSheet(name);\n    sheet.clear();\n    sheet.appendRow(headers);\n    if (items && items.length > 0) {\n      items.forEach(function(item) { sheet.appendRow(mapFn(item)); });\n    }\n  }\n\n  sync('Trabajo', ['ID', 'Tarea', 'Status', 'Prioridad', 'Deadline'], data.workTasks, function(t) {\n    return [t.id, t.task, t.status, t.priority, t.deadline];\n  });\n\n  sync('Personal', ['ID', 'Tarea', 'Completada', 'Prioridad', 'Categoría'], data.fefaTasks, function(t) {\n    return [t.id, t.text, t.completed, t.priority, t.category];\n  });\n\n  sync('Budget', ['ID', 'Descripción', 'Monto', 'Tipo', 'Fecha'], data.budget, function(b) {\n    return [b.id, b.description, b.amount, b.type, b.date];\n  });\n\n  sync('Eventos', ['ID', 'Título', 'Fecha', 'Ubicación', 'Tipo'], data.importantEvents, function(e) {\n    return [e.id, e.title, e.date, e.location, e.type];\n  });\n  \n  return ContentService.createTextOutput(JSON.stringify({"status":"ok"}))\n    .setMimeType(ContentService.MimeType.JSON);\n}\n\nfunction doGet() {\n  var ss = SpreadsheetApp.getActiveSpreadsheet();\n  var sheet = ss.getSheetByName('IFN');\n  if (!sheet) return ContentService.createTextOutput(JSON.stringify({error: "No IFN sheet"})).setMimeType(ContentService.MimeType.JSON);\n  var data = sheet.getDataRange().getValues();\n  var headers = data[0];\n  var rows = data.slice(1);\n  var ifnData = rows.map(function(row) {\n    var obj = {};\n    headers.forEach(function(h, i) {\n      var key = h.toLowerCase().trim();\n      obj[key] = row[i];\n    });\n    obj.id = obj.sys_id || obj.number || Math.random().toString(36).substr(2, 9);\n    return obj;\n  });\n  return ContentService.createTextOutput(JSON.stringify({ifnData: ifnData}))\n    .setMimeType(ContentService.MimeType.JSON);\n}`;
+                                const code = `function doGet() {\n  var ss = SpreadsheetApp.getActiveSpreadsheet();\n  var sheet = ss.getSheetByName('Links');\n  if (!sheet) return ContentService.createTextOutput(JSON.stringify({error: "No links sheet"})).setMimeType(ContentService.MimeType.JSON);\n  var data = sheet.getDataRange().getValues();\n  var headers = data[0];\n  var rows = data.slice(1);\n  var linkData = rows.map(function(row) {\n    var obj = {};\n    headers.forEach(function(h, i) {\n      // Nombre, Link, Descripción, Tipo, Sección, Status\n      var key = h.toLowerCase().trim();\n      obj[key] = row[i];\n    });\n    obj.id = Math.random().toString(36).substr(2, 9);\n    return obj;\n  });\n  return ContentService.createTextOutput(JSON.stringify({linkData: linkData}))\n    .setMimeType(ContentService.MimeType.JSON);\n}`;
                                 navigator.clipboard.writeText(code);
-                                toast.success('Código completo copiado');
+                                toast.success('Código para Links copiado');
                               }}
                             >
                               Copiar Todo
@@ -810,7 +855,7 @@ function doGet() {
                          disabled={!webhookUrl.startsWith('http')}
                          className="flex-1 h-14 bg-latam-salmon text-white text-xs font-black hover:bg-latam-salmon/90 rounded-2xl shadow-xl shadow-black/10 transition-all uppercase tracking-widest"
                        >
-                         ACTIVAR RESPALDO AUTOMÁTICO
+                         GUARDAR CONFIGURACIÓN
                        </Button>
                     </div>
                   </div>
@@ -1567,137 +1612,398 @@ function doGet() {
 
             {activeTab === 'ifn' && (
               <div className="space-y-8">
-                <header className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 rounded-2xl shadow-sm border-none gap-4">
-                  <div className="flex-1">
-                    <h2 className="text-2xl font-bold uppercase tracking-tighter text-latam-blue">Indicadores IFN</h2>
-                    <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Búsqueda de tickets y KPIs</p>
+                <header className="bg-white p-6 rounded-2xl shadow-sm border-none space-y-6">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div className="flex-1">
+                      <h2 className="text-2xl font-bold uppercase tracking-tighter text-latam-blue">Tickets IFN</h2>
+                      <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest flex items-center gap-2">
+                        Sincronizado con Google Sheets 
+                        <span className="bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full text-[8px] font-black">
+                          {ifnData.length} REGISTROS TOTALES
+                        </span>
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => {
+                          setIfnFilterNumber('');
+                          setIfnFilterState('');
+                          setIfnFilterItElement('');
+                          setIfnSearchTerm('');
+                        }}
+                        className="text-[10px] font-black uppercase text-zinc-400 hover:text-latam-blue"
+                      >
+                        Limpiar Filtros
+                      </Button>
+                      
+                      <Button 
+                        variant="outline" 
+                        className="border-latam-salmon text-latam-salmon font-bold hover:bg-latam-salmon/5 h-9"
+                        onClick={async () => {
+                          if (!webhookUrl) {
+                            toast.error('Configura el Webhook primero');
+                            return;
+                          }
+                          setIsSyncing(true);
+                          try {
+                            const controller = new AbortController();
+                            const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+                            
+                            const res = await fetch(webhookUrl, { signal: controller.signal });
+                            clearTimeout(timeoutId);
+                            
+                            const data = await res.json();
+                            console.log('Sync Raw Data:', data);
+
+                            let hasUpdated = false;
+                            
+                            if (data.ifnData) {
+                              setIfnData(data.ifnData);
+                              hasUpdated = true;
+                            }
+
+                            if (data.linkData) {
+                              setLinkData(data.linkData);
+                              hasUpdated = true;
+                            }
+
+                            if (hasUpdated) {
+                              fetch('/api/data/save', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  workTasks, fefaTasks, budget, importantEvents, 
+                                  ifnData: data.ifnData || ifnData,
+                                  linkData: data.linkData || linkData
+                                })
+                              });
+                              toast.success('Datos IFN actualizados');
+                            } else {
+                              toast.warning('No se encontraron datos IFN en la respuesta');
+                            }
+                          } catch (err: any) {
+                            if (err.name === 'AbortError') {
+                              toast.error('Tiempo de espera agotado (60s). El servidor de Google tarda demasiado.');
+                            } else {
+                              toast.error('Error al traer info de IFN desde Google');
+                            }
+                          } finally {
+                            setIsSyncing(false);
+                          }
+                        }}
+                      >
+                        <RefreshCcw size={16} className={cn("mr-2", isSyncing && "animate-spin")} /> 
+                        {isSyncing ? 'SYNC...' : 'SYNC'}
+                      </Button>
+                    </div>
                   </div>
                   
-                  <div className="flex flex-col md:flex-row items-center gap-2 w-full md:w-auto">
-                    <div className="relative w-full md:w-80">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={14} />
                       <input 
                         type="text"
-                        placeholder="Buscar por #, descripción, estado o ItElement..."
-                        value={ifnSearchTerm}
-                        onChange={(e) => setIfnSearchTerm(e.target.value)}
-                        className="w-full bg-zinc-50 border border-zinc-100 rounded-xl py-2 pl-9 pr-4 text-xs focus:ring-2 focus:ring-latam-blue outline-none transition-all placeholder:text-zinc-300 font-bold"
+                        placeholder="N° Ticket (Col A)"
+                        value={ifnFilterNumber}
+                        onChange={(e) => setIfnFilterNumber(e.target.value)}
+                        className="w-full bg-zinc-50 border border-zinc-100 rounded-xl py-2.5 pl-9 pr-4 text-xs focus:ring-2 focus:ring-latam-blue outline-none transition-all placeholder:text-zinc-300 font-bold"
                       />
                     </div>
-                    
-                    <Button 
-                      variant="outline" 
-                      className="w-full md:w-auto border-latam-salmon text-latam-salmon font-bold hover:bg-latam-salmon/5"
-                      onClick={async () => {
-                        if (!webhookUrl) {
-                          toast.error('Configura el Webhook primero');
-                          return;
-                        }
-                        setIsSyncing(true);
-                        try {
-                          const res = await fetch(webhookUrl);
-                          const data = await res.json();
-                          if (data.ifnData) {
-                            setIfnData(data.ifnData);
-                            fetch('/api/data/save', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                workTasks, fefaTasks, budget, importantEvents, ifnData: data.ifnData
-                              })
-                            });
-                            toast.success('Datos IFN actualizados');
-                          }
-                        } catch (err) {
-                          toast.error('Error al traer info de IFN desde Google');
-                        } finally {
-                          setIsSyncing(false);
-                        }
-                      }}
-                    >
-                      <RefreshCcw size={18} className={cn("mr-2", isSyncing && "animate-spin")} /> ACTUALIZAR
-                    </Button>
+                    <div className="relative">
+                      <Select value={ifnFilterState} onValueChange={(val) => setIfnFilterState(val === 'ALL' ? '' : val)}>
+                        <SelectTrigger className="w-full bg-zinc-50 border border-zinc-100 rounded-xl h-[42px] text-xs focus:ring-2 focus:ring-latam-blue outline-none transition-all font-bold text-zinc-700">
+                          <SelectValue placeholder="Estado (Col C)" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white rounded-xl border-zinc-100">
+                          <SelectItem value="ALL" className="text-[10px] font-black uppercase text-zinc-400">Ver Todos</SelectItem>
+                          <SelectItem value="In Progress" className="text-[10px] font-black uppercase">In Progress</SelectItem>
+                          <SelectItem value="Awaiting Info" className="text-[10px] font-black uppercase">Awaiting Info</SelectItem>
+                          <SelectItem value="Resolved" className="text-[10px] font-black uppercase">Resolved</SelectItem>
+                          <SelectItem value="New" className="text-[10px] font-black uppercase">New</SelectItem>
+                          <SelectItem value="Closed" className="text-[10px] font-black uppercase">Closed</SelectItem>
+                          <SelectItem value="Cancelled" className="text-[10px] font-black uppercase">Cancelled</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="relative">
+                      <Select value={ifnFilterItElement} onValueChange={(val) => setIfnFilterItElement(val === 'ALL' ? '' : val)}>
+                        <SelectTrigger className="w-full bg-zinc-50 border border-zinc-100 rounded-xl h-[42px] text-xs focus:ring-2 focus:ring-latam-blue outline-none transition-all font-bold text-zinc-700">
+                          <SelectValue placeholder="ItElement (Col AH)" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white rounded-xl border-zinc-100">
+                          <SelectItem value="ALL" className="text-[10px] font-black uppercase text-zinc-400">Ver Todos</SelectItem>
+                          <SelectItem value="IFN" className="text-[10px] font-black uppercase">IFN</SelectItem>
+                          <SelectItem value="IFNCREW" className="text-[10px] font-black uppercase">IFNCREW</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 </header>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {ifnData
-                    .filter(record => {
-                      if (!ifnSearchTerm || ifnSearchTerm.trim() === '') return false; 
-                      const term = ifnSearchTerm.toLowerCase();
+                <div className="bg-white rounded-2xl shadow-sm overflow-hidden border border-zinc-100">
+                  {(() => {
+                    const termNum = (ifnFilterNumber || '').trim().toLowerCase();
+                    const termState = (ifnFilterState || '').trim().toLowerCase();
+                    const termItElem = (ifnFilterItElement || '').trim().toLowerCase();
+                    
+                    const hasFilter = termNum !== '' || termState !== '' || termItElem !== '';
+                    
+                    const filtered = ifnData.filter(record => {
+                      const ticketNum = String(record.number || '').toLowerCase();
+                      const itElem = String(record.itelement || '').toLowerCase();
+                      const state = String(record.state || '').toLowerCase();
+
+                      const matchNum = termNum === '' || ticketNum.includes(termNum);
+                      const matchState = termState === '' || state === termState;
+                      const matchItElem = termItElem === '' || itElem === termItElem;
+                      
+                      return matchNum && matchState && matchItElem;
+                    });
+
+                    if (filtered.length > 0) {
                       return (
-                        record.number?.toString().toLowerCase().includes(term) ||
-                        record.short_description?.toLowerCase().includes(term) ||
-                        record.state?.toLowerCase().includes(term) ||
-                        (record as any).itelement?.toString().toLowerCase().includes(term)
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left">
+                            <thead className="bg-zinc-50 border-b border-zinc-100">
+                              <tr>
+                                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest w-40">N° TICKET (COL A)</th>
+                                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest">ESTADO (COL C)</th>
+                                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest hidden md:table-cell">ITELEMENT (COL AH)</th>
+                                <th className="px-6 py-4 text-[10px] font-black text-zinc-400 uppercase tracking-widest text-right">ACCIONES</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-50">
+                              {filtered.map((record, index) => (
+                                <tr 
+                                  key={`${record.id}-${index}`} 
+                                  className="hover:bg-latam-blue/5 transition-colors cursor-pointer group animate-in fade-in slide-in-from-top-1 duration-200"
+                                  onClick={() => setSelectedIFN(record)}
+                                >
+                                  <td className="px-6 py-4">
+                                    <div className="flex items-center gap-3">
+                                      <div className={cn(
+                                        "w-1 h-6 rounded-full",
+                                        String(record.priority || '').toLowerCase().includes('1') ? 'bg-red-500' :
+                                        String(record.priority || '').toLowerCase().includes('2') ? 'bg-orange-500' : 'bg-latam-blue'
+                                      )} />
+                                      <span className="text-sm font-black text-latam-blue uppercase tracking-tighter">{record.number || 'SIN ID'}</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <Badge className={cn(
+                                      "text-[9px] font-black uppercase",
+                                      String(record.state || '').toLowerCase().includes('resolved') || String(record.state || '').toLowerCase().includes('closed') 
+                                        ? 'bg-latam-green text-green-700' 
+                                        : 'bg-zinc-100 text-zinc-500'
+                                    )}>
+                                      {record.state || 'N/A'}
+                                    </Badge>
+                                  </td>
+                                  <td className="px-6 py-4 hidden md:table-cell">
+                                    <p className="text-xs font-bold text-zinc-600 line-clamp-1">{record.itelement || '-'}</p>
+                                  </td>
+                                  <td className="px-6 py-4 text-right">
+                                    <div className="inline-flex items-center gap-2 text-[10px] font-black text-latam-blue opacity-0 group-hover:opacity-100 transition-opacity uppercase tracking-widest">
+                                      VER FICHA <ChevronRight size={14} className="animate-pulse" />
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       );
-                    })
-                    .length > 0 ? ifnData
-                    .filter(record => {
-                      if (!ifnSearchTerm || ifnSearchTerm.trim() === '') return false; 
-                      const term = ifnSearchTerm.toLowerCase();
-                      return (
-                        record.number?.toString().toLowerCase().includes(term) ||
-                        record.short_description?.toLowerCase().includes(term) ||
-                        record.state?.toLowerCase().includes(term) ||
-                        (record as any).itelement?.toString().toLowerCase().includes(term)
-                      );
-                    })
-                    .map((record) => (
-                    <Card key={record.id} className="border-none shadow-sm hover:shadow-md transition-shadow overflow-hidden bg-white flex flex-col">
-                       <div className={cn(
-                         "h-1 group-hover:h-2 transition-all",
-                         record.priority?.toLowerCase().includes('1') ? 'bg-red-500' :
-                         record.priority?.toLowerCase().includes('2') ? 'bg-orange-500' : 'bg-latam-blue'
-                       )}></div>
-                       <CardHeader className="pb-2">
-                          <div className="flex justify-between items-start">
-                             <Badge variant="outline" className="text-[8px] border-zinc-200 text-zinc-500 font-black">{record.number || 'TICKET'}</Badge>
-                             <Badge className={cn(
-                               "text-[8px] font-black",
-                               record.state?.toLowerCase().includes('resolved') || record.state?.toLowerCase().includes('closed') ? 'bg-latam-green text-green-700' : 'bg-red-100 text-red-700'
-                             )}>
-                               {(record.state || 'PENDIENTE').toUpperCase()}
-                             </Badge>
-                          </div>
-                          <CardTitle className="text-sm font-bold tracking-tight mt-2 uppercase line-clamp-2 min-h-[2.5rem]">{record.short_description || 'Sin descripción'}</CardTitle>
-                       </CardHeader>
-                       <CardContent className="space-y-4 flex-1 flex flex-col">
-                          <div className="grid grid-cols-2 gap-4">
-                             <div>
-                                <p className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1">Módulo</p>
-                                <p className="text-xs font-bold text-latam-blue truncate">{record.u_module || '-'}</p>
-                             </div>
-                             <div>
-                                <p className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-1">ItElement</p>
-                                <p className="text-xs font-bold text-zinc-600 truncate">{(record as any).itelement || '-'}</p>
-                             </div>
-                          </div>
-                          <div className="pt-4 border-t border-zinc-50 flex justify-between items-center mt-auto">
-                             <div className="flex flex-col">
-                                <p className="text-[9px] font-black text-zinc-300 uppercase tracking-widest">Abierto el</p>
-                                <p className="text-[10px] font-bold text-zinc-400">{record.opened_at || '-'}</p>
-                             </div>
-                             <div className="w-8 h-8 rounded-full bg-zinc-50 flex items-center justify-center border border-zinc-100" title={record.assigned_to}>
-                                <Users size={12} className="text-zinc-400" />
-                             </div>
-                          </div>
-                       </CardContent>
-                    </Card>
-                  )) : (
-                    <div className="col-span-full py-20 text-center space-y-4 bg-zinc-50 rounded-3xl border border-dashed">
-                       <div className="w-16 h-16 bg-white rounded-full shadow-sm flex items-center justify-center mx-auto mb-4 border">
-                          <Search size={32} className="text-zinc-200" />
-                       </div>
-                       <p className="text-zinc-400 font-bold uppercase tracking-widest text-xs">
-                         {ifnSearchTerm ? 'No se encontraron coincidencias' : 'Escribe para buscar tickets'}
-                       </p>
-                       <p className="text-[10px] text-zinc-400 max-w-xs mx-auto">
-                         {ifnSearchTerm ? 'Prueba con otro número o descripción.' : 'Usa la barra de arriba para buscar por número, descripción, estado o ItElement.'}
-                       </p>
-                    </div>
-                  )}
+                    }
+
+                    return (
+                      <div className="flex flex-col items-center justify-center py-24 text-center space-y-4">
+                         <div className="w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-dashed border-zinc-200">
+                            <Search size={32} className={cn("text-zinc-200", ifnData.length === 0 && "text-latam-salmon animate-pulse")} />
+                         </div>
+                         <p className="text-zinc-400 font-bold uppercase tracking-widest text-xs">
+                           {ifnData.length === 0 
+                             ? 'No hay registros cargados' 
+                             : hasFilter ? 'No se encontraron coincidencias' : 'Búsqueda de Tickets IFN'}
+                         </p>
+                         <p className="text-[10px] text-zinc-400 max-w-xs mx-auto">
+                           {ifnData.length === 0
+                             ? 'Haz click en el botón SYNC arriba a la derecha para traer los tickets desde Google Sheets por primera vez.'
+                             : hasFilter 
+                               ? 'Prueba ajustando los campos de búsqueda o borrando filtros.' 
+                               : `Listo para buscar en ${ifnData.length} registros. Usa los filtros de arriba para encontrar un ticket.`}
+                         </p>
+                         {ifnData.length === 0 && (
+                            <div className="pt-4">
+                              <p className="text-[8px] text-zinc-300 font-bold uppercase tracking-tighter">Asegúrate de haber configurado el Webhook en el panel lateral</p>
+                            </div>
+                         )}
+                      </div>
+                    );
+                  })()}
                 </div>
+              </div>
+            )}
+
+            {activeTab === 'links' && (
+              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
+                 <header className="p-8 bg-latam-blue rounded-[32px] text-white overflow-hidden relative group">
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -mr-20 -mt-20 blur-3xl group-hover:scale-110 transition-transform duration-700" />
+                    <div className="relative flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                      <div className="flex items-center gap-6">
+                        <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md shadow-inner border border-white/20">
+                          <Globe size={32} />
+                        </div>
+                        <div>
+                          <h2 className="text-3xl font-bold tracking-tighter uppercase mb-1">Directorio de Accesos</h2>
+                          <p className="text-[10px] font-black tracking-[0.2em] text-white/60 uppercase">Links Corporativos y Herramientas Regionales</p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-3">
+                        <Button 
+                          variant="outline" 
+                          className="bg-white/10 border-white/20 text-white hover:bg-white/20 h-10 px-6 rounded-xl font-bold uppercase tracking-widest text-[10px]"
+                          onClick={async () => {
+                             const targetUrl = linksWebhookUrl || webhookUrl;
+                             if (!targetUrl) {
+                                toast.error('Configura el Webhook primero');
+                                return;
+                             }
+                             setIsSyncing(true);
+                             try {
+                               const controller = new AbortController();
+                               const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+                               
+                               const res = await fetch(targetUrl, { signal: controller.signal });
+                               clearTimeout(timeoutId);
+                               
+                               const data = await res.json();
+                               console.log('Sync Links Data Response:', data);
+
+                               let receivedLinks = null;
+
+                               // Robust check for links in the response
+                               if (data.linkData) {
+                                 receivedLinks = data.linkData;
+                               } else if (data.links) {
+                                 receivedLinks = data.links;
+                               } else if (data.data && Array.isArray(data.data)) {
+                                 const potentialLinks = data.data;
+                                 if (potentialLinks.length > 0 && (potentialLinks[0].nombre || potentialLinks[0].link)) {
+                                   receivedLinks = potentialLinks;
+                                 }
+                               } else if (Array.isArray(data)) {
+                                 receivedLinks = data;
+                               }
+
+                               if (receivedLinks && Array.isArray(receivedLinks)) {
+                                 setLinkData(receivedLinks);
+                                 await fetch('/api/data/save', {
+                                   method: 'POST',
+                                   headers: { 'Content-Type': 'application/json' },
+                                   body: JSON.stringify({
+                                     workTasks, fefaTasks, budget, importantEvents, ifnData, linkData: receivedLinks
+                                   })
+                                 });
+                                 toast.success('Directorio de enlaces actualizado');
+                               } else {
+                                 console.warn('Estructura de respuesta no reconocida:', data);
+                                 toast.error('No se encontraron enlaces válidos.');
+                               }
+                             } catch (err: any) {
+                               if (err.name === 'AbortError') {
+                                 toast.error('Tiempo de espera agotado (60s).');
+                               } else {
+                                 toast.error('Error al sincronizar datos');
+                                 console.error(err);
+                               }
+                             } finally {
+                               setIsSyncing(false);
+                             }
+                          }}
+                        >
+                          <RefreshCcw size={16} className={cn("mr-2", isSyncing && "animate-spin")} />
+                          {isSyncing ? 'SINCRONIZANDO...' : 'ACTUALIZAR DATOS'}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-8 relative max-w-2xl">
+                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" size={20} />
+                      <input 
+                        type="text"
+                        placeholder="Buscar acceso por nombre..."
+                        value={linkSearchTerm}
+                        onChange={(e) => setLinkSearchTerm(e.target.value)}
+                        className="w-full bg-white/10 border border-white/20 rounded-2xl py-4 pl-12 pr-6 text-sm text-white placeholder:text-white/30 focus:ring-4 focus:ring-white/10 outline-none transition-all font-bold backdrop-blur-sm"
+                      />
+                    </div>
+                 </header>
+
+                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-20">
+                    {linkData
+                      .filter(l => 
+                        (l.status || '').toUpperCase() === 'ACTIVO' && 
+                        (l.nombre || '').toLowerCase().includes(linkSearchTerm.toLowerCase())
+                      )
+                      .map((link, idx) => (
+                        <motion.div
+                          key={link.id || idx}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: idx * 0.05 }}
+                          className="group"
+                        >
+                          <a 
+                            href={link.link} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="block bg-white p-6 rounded-[24px] border border-zinc-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 relative overflow-hidden active:scale-95"
+                          >
+                             <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <ExternalLink size={16} className="text-latam-blue" />
+                             </div>
+                             <div className="flex items-start gap-4">
+                                <div className="w-12 h-12 bg-zinc-50 rounded-xl flex items-center justify-center text-latam-blue group-hover:bg-latam-blue group-hover:text-white transition-colors">
+                                   <Globe size={24} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                   <h3 className="font-bold text-zinc-900 group-hover:text-latam-blue transition-colors truncate mb-1 uppercase tracking-tight">{link.nombre}</h3>
+                                   {link.seccion && (
+                                      <Badge variant="outline" className="text-[8px] font-black uppercase text-zinc-400 border-zinc-100 mb-2">
+                                         {link.seccion}
+                                      </Badge>
+                                   )}
+                                   <p className="text-[11px] text-zinc-500 font-medium line-clamp-2 leading-relaxed">
+                                      {link.descripcion || 'Sin descripción adicional disponible.'}
+                                    </p>
+                                </div>
+                             </div>
+                             <div className="mt-6 flex justify-between items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                <span className="text-[10px] font-black text-latam-blue uppercase tracking-widest">Acceso Directo</span>
+                                <ChevronRight size={14} className="text-latam-blue animate-pulse" />
+                             </div>
+                          </a>
+                        </motion.div>
+                      ))
+                    }
+
+                    {linkData.length === 0 && !isSyncing && (
+                      <div className="col-span-full py-32 flex flex-col items-center justify-center text-center space-y-4 bg-white/50 border-2 border-dashed border-zinc-200 rounded-[40px]">
+                        <div className="w-20 h-20 bg-zinc-50 rounded-full flex items-center justify-center mb-4">
+                           <Globe size={40} className="text-zinc-200" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-bold text-zinc-400 uppercase tracking-tighter">Directorio Vacío</h3>
+                          <p className="text-xs text-zinc-400 font-bold max-w-xs mx-auto mt-2">
+                            Haz click en el botón de actualización para cargar los links compartidos desde Google Sheets.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                 </div>
               </div>
             )}
 
@@ -1888,8 +2194,71 @@ function doGet() {
           toast.success(`${items.length} eventos importados`);
         }}
       />
+      <IFNDetailDialog 
+        record={selectedIFN} 
+        onClose={() => setSelectedIFN(null)} 
+      />
       <Toaster />
     </div>
+  );
+}
+
+function IFNDetailDialog({ record, onClose }: { record: IFNRecord | null, onClose: () => void }) {
+  if (!record) return null;
+
+  // Filtrar algunos campos internos o repetidos para la ficha
+  const details = Object.entries(record).filter(([key]) => 
+    !['id', 'sys_id'].includes(key)
+  );
+
+  return (
+    <Dialog open={!!record} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-2xl bg-white rounded-3xl border-none shadow-2xl p-0 overflow-hidden">
+        <DialogHeader className="p-6 bg-latam-blue text-white">
+          <div className="flex justify-between items-start">
+            <div>
+              <Badge className="bg-white/20 text-white border-none mb-2 font-black text-[10px]">FICHA DE REGISTRO</Badge>
+              <DialogTitle className="text-2xl font-bold tracking-tighter uppercase">{record.number || 'Detalle del Ticket'}</DialogTitle>
+            </div>
+            <div className={cn(
+              "px-3 py-1 rounded-full text-[10px] font-black uppercase",
+              String(record.state || '').toLowerCase().includes('resolved') ? 'bg-latam-green text-green-700' : 'bg-white/10 text-white'
+            )}>
+              {record.state || 'PENDIENTE'}
+            </div>
+          </div>
+        </DialogHeader>
+
+        <ScrollArea className="max-h-[70vh]">
+          <div className="p-6 space-y-6">
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+               {details.map(([key, value]) => {
+                 // Formatear el nombre de la key (ej: short_description -> Short Description)
+                 const label = key.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+                 
+                 return (
+                   <div key={key} className={cn(
+                     "p-4 rounded-2xl bg-zinc-50 border border-zinc-100 flex flex-col gap-1",
+                     (key === 'description' || key === 'short_description') && "md:col-span-2"
+                   )}>
+                     <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">{label}</span>
+                     <span className="text-sm font-bold text-zinc-700 leading-snug whitespace-pre-wrap">
+                       {value ? String(value) : '-'}
+                     </span>
+                   </div>
+                 );
+               })}
+             </div>
+          </div>
+        </ScrollArea>
+        
+        <div className="p-6 bg-zinc-50 border-t flex justify-end">
+          <Button onClick={onClose} className="bg-latam-blue hover:bg-latam-blue/90 font-bold uppercase tracking-widest text-[10px]">
+            CERRAR FICHA
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
