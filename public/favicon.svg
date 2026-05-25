@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <!-- Define a single beautifully shaped petal with shading -->
+    <g id="petal">
+      <path d="M50,50 C38,22 44,4 50,4 C56,4 62,22 50,50 Z" fill="#FF758F" />
+      <path d="M50,50 C44,28 47,8 50,4 C53,8 56,28 50,50 Z" fill="#FF8DA1" />
+      <!-- Left-side highlight for a subtle 3D shine -->
+      <path d="M50,50 C40,24 45,8 50,4 Z" fill="#FF9EAE" opacity="0.6" />
+    </g>
+  </defs>
+  
+  <!-- 5 Petals arranged symmetrically around the center (50,50) -->
+  <g>
+    <use href="#petal" transform="rotate(0, 50, 50)" />
+    <use href="#petal" transform="rotate(72, 50, 50)" />
+    <use href="#petal" transform="rotate(144, 50, 50)" />
+    <use href="#petal" transform="rotate(216, 50, 50)" />
+    <use href="#petal" transform="rotate(288, 50, 50)" />
+  </g>
+  
+  <!-- Pistil filaments/stamen lines radiating from the center -->
+  <g stroke="#FFE3A8" stroke-width="1.5" stroke-linecap="round" opacity="0.9">
+    <line x1="50" y1="50" x2="50" y2="33" />
+    <line x1="50" y1="50" x2="66.2" y2="44.8" />
+    <line x1="50" y1="50" x2="60.0" y2="63.8" />
+    <line x1="50" y1="50" x2="40.0" y2="63.8" />
+    <line x1="50" y1="50" x2="33.8" y2="44.8" />
+  </g>
+  
+  <!-- Small pollen tips at the end of each filament -->
+  <circle cx="50" cy="33" r="2.2" fill="#FFF" />
+  <circle cx="66.2" cy="44.8" r="2.2" fill="#FFF" />
+  <circle cx="60.0" cy="63.8" r="2.2" fill="#FFF" />
+  <circle cx="40.0" cy="63.8" r="2.2" fill="#FFF" />
+  <circle cx="33.8" cy="44.8" r="2.2" fill="#FFF" />
+  
+  <!-- Layered golden core -->
+  <circle cx="50" cy="50" r="11" fill="#FFD166" />
+  <circle cx="50" cy="50" r="7" fill="#F7B267" />
+  <circle cx="50" cy="50" r="4.5" fill="#FFE3A8" />
+  <circle cx="50" cy="50" r="2" fill="#FFF" />
+</svg>
